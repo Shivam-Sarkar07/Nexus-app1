@@ -1,3 +1,4 @@
+
 export enum Category {
   SOCIAL = 'Social',
   GAMES = 'Games',
@@ -66,7 +67,9 @@ export interface BugReport {
   id: string;
   userId: string;
   userName: string;
+  title: string; // Added
   description: string;
+  contactInfo: string; // Added (Email/Phone)
   status: 'pending' | 'approved' | 'rejected';
   date: string;
   rewardPoints: number;
@@ -79,4 +82,6 @@ export interface SupportTicket {
   message: string;
   date: string;
   status: 'open' | 'closed';
+  adminReply?: string; // Added
+  replyDate?: string; // Added
 }

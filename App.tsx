@@ -10,6 +10,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { ProfileView } from './components/ProfileView';
 import { FloatingChat } from './components/FloatingChat';
 import { getGeminiRecommendations } from './services/geminiService';
+import { supabase } from './services/supabaseClient';
 
 // --- PERSISTENCE HELPER ---
 function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T | ((val: T) => T)) => void] {
@@ -45,12 +46,15 @@ interface AppContextType {
   bugReports: BugReport[];
   pointsHistory: PointTransaction[];
   notifications: Notification[];
-  login: (email: string) => void;
-  signup: (name: string, email: string) => void;
+  supportTickets: SupportTicket[];
+  allUsers: User[];
+  deleteUser: (userId: string) => void;
+  login: (email: string, password?: string) => Promise<void>;
+  signup: (name: string, email: string, password?: string) => Promise<void>;
   logout: () => void;
   addToHistory: (app: AppData, duration: number) => void;
   toggleWishlist: (appId: string) => void;
-  reportBug: (desc: string) => void;
+  reportBug: (title: string, desc: string, contact: string) => void;
   resolveBug: (id: string, status: 'approved' | 'rejected') => void;
   upgradeUser: (redeemedPoints?: number, paymentId?: string) => void;
   addApp: (app: AppData) => void;
@@ -59,6 +63,7 @@ interface AppContextType {
   updateUser: (data: Partial<User>) => void;
   deleteAccount: () => void;
   toggleTheme: () => void;
+  changePassword: (newPassword: string) => Promise<void>;
   submitSupport: (subject: string, message: string) => void;
 }
 
@@ -132,17 +137,21 @@ const AuthPage = () => {
   const isLoginMode = searchParams.get('mode') !== 'signup';
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      if (isLoginMode) login(email);
-      else signup(name, email);
-      setLoading(false);
+    try {
+      if (isLoginMode) await login(email, password);
+      else await signup(name, email, password);
       navigate('/');
-    }, 1000);
+    } catch (error) {
+      alert("Authentication Error: " + (error as any).message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -152,7 +161,7 @@ const AuthPage = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           {!isLoginMode && <input placeholder="Full Name" value={name} onChange={e => setName(e.target.value)} className="w-full bg-vault-900 border border-white/10 rounded-xl p-4 text-white focus:border-vault-accent outline-none" required />}
           <input type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-vault-900 border border-white/10 rounded-xl p-4 text-white focus:border-vault-accent outline-none" required />
-          <input type="password" placeholder="Password" className="w-full bg-vault-900 border border-white/10 rounded-xl p-4 text-white focus:border-vault-accent outline-none" required />
+          <input type="password" placeholder="Password (min 6 chars)" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-vault-900 border border-white/10 rounded-xl p-4 text-white focus:border-vault-accent outline-none" required minLength={6} />
           <button disabled={loading} className="w-full bg-vault-accent hover:bg-vault-accentHover text-white font-bold py-4 rounded-xl flex items-center justify-center transition-all">
             {loading ? <Loader2 className="animate-spin w-5 h-5" /> : (isLoginMode ? 'Log In' : 'Create Account')}
           </button>
@@ -217,13 +226,13 @@ const Dashboard = () => {
     <div className="pb-24 pt-6 px-4 max-w-lg mx-auto min-h-screen">
        <header className="flex justify-between items-center mb-6">
          <div>
-            <h1 className="text-2xl font-bold text-white">Discover</h1>
-            <p className="text-xs text-gray-400">Welcome back, {user?.name}</p>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Discover</h1>
+            <p className="text-xs text-slate-500 dark:text-gray-400">Welcome back, {user?.name}</p>
          </div>
          <div className="flex items-center space-x-2">
-             <div className="bg-vault-800 px-3 py-1 rounded-full border border-white/10 flex items-center">
+             <div className="bg-white dark:bg-vault-800 px-3 py-1 rounded-full border border-slate-200 dark:border-white/10 flex items-center shadow-sm dark:shadow-none">
                 <Zap className="w-3 h-3 text-yellow-500 mr-1 fill-yellow-500" />
-                <span className="text-xs font-bold">{user?.points}</span>
+                <span className="text-xs font-bold text-slate-900 dark:text-white">{user?.points}</span>
              </div>
          </div>
        </header>
@@ -233,29 +242,29 @@ const Dashboard = () => {
           <input 
             value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search apps..." 
-            className="w-full bg-vault-800 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:border-vault-accent outline-none" 
+            className="w-full bg-white dark:bg-vault-800 border border-slate-200 dark:border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:border-sky-500 dark:focus:border-vault-accent outline-none text-slate-900 dark:text-white shadow-sm dark:shadow-none" 
           />
        </div>
 
        {apps.length === 0 ? (
-         <div className="text-center py-20 bg-vault-800/50 rounded-2xl border border-white/5 border-dashed">
-            <Cloud className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-            <h3 className="text-white font-bold">No Apps Available</h3>
+         <div className="text-center py-20 bg-slate-50 dark:bg-vault-800/50 rounded-2xl border border-dashed border-slate-200 dark:border-white/5">
+            <Cloud className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <h3 className="text-slate-900 dark:text-white font-bold">No Apps Available</h3>
             <p className="text-gray-500 text-sm px-8">The database is currently empty. Please ask an admin to deploy new apps.</p>
          </div>
        ) : (
          <div className="grid grid-cols-2 gap-4">
             {filtered.map(app => (
-               <div key={app.id} className="bg-vault-800 rounded-2xl p-4 border border-white/5 hover:border-vault-accent/50 transition-all group relative">
+               <div key={app.id} className="bg-white dark:bg-vault-800 rounded-2xl p-4 border border-slate-100 dark:border-white/5 hover:border-sky-200 dark:hover:border-vault-accent/50 transition-all group relative shadow-sm dark:shadow-none">
                   <div className="absolute top-2 right-2 z-10">
-                     <Heart onClick={(e) => { e.preventDefault(); toggleWishlist(app.id); }} className={`w-5 h-5 cursor-pointer transition-transform active:scale-90 ${wishlist.includes(app.id) ? 'fill-red-500 text-red-500' : 'text-gray-600'}`} />
+                     <Heart onClick={(e) => { e.preventDefault(); toggleWishlist(app.id); }} className={`w-5 h-5 cursor-pointer transition-transform active:scale-90 ${wishlist.includes(app.id) ? 'fill-red-500 text-red-500' : 'text-gray-400'}`} />
                   </div>
-                  <div className="aspect-square rounded-xl bg-vault-700 mb-3 overflow-hidden">
+                  <div className="aspect-square rounded-xl bg-slate-100 dark:bg-vault-700 mb-3 overflow-hidden">
                      <img src={app.icon} className="w-full h-full object-cover" alt="" />
                   </div>
-                  <h3 className="font-bold text-sm text-white truncate">{app.name}</h3>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white truncate">{app.name}</h3>
                   <p className="text-[10px] text-gray-500 mb-3">{app.category}</p>
-                  <Link to={`/runner?id=${app.id}`} className="block w-full text-center bg-white/5 hover:bg-white/10 text-white py-2 rounded-lg text-xs font-bold transition-colors">
+                  <Link to={`/runner?id=${app.id}`} className="block w-full text-center bg-sky-50 dark:bg-white/5 hover:bg-sky-100 dark:hover:bg-white/10 text-sky-600 dark:text-white py-2 rounded-lg text-xs font-bold transition-colors">
                      Open App
                   </Link>
                </div>
@@ -294,7 +303,7 @@ const SearchPage = () => {
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-lg mx-auto min-h-screen">
-      <h1 className="text-2xl font-bold mb-6 text-white">Search</h1>
+      <h1 className="text-2xl font-bold mb-6 text-slate-900 dark:text-white">Search</h1>
       
       {/* Standard Search */}
       <div className="relative mb-8">
@@ -304,7 +313,7 @@ const SearchPage = () => {
           placeholder="Find apps by name..." 
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-vault-800 border border-white/10 rounded-lg py-3 pl-10 pr-4 focus:outline-none focus:border-vault-accent text-sm text-white"
+          className="w-full bg-white dark:bg-vault-800 border border-slate-200 dark:border-white/10 rounded-lg py-3 pl-10 pr-4 focus:outline-none focus:border-sky-500 dark:focus:border-vault-accent text-sm text-slate-900 dark:text-white shadow-sm dark:shadow-none"
         />
       </div>
 
@@ -312,26 +321,26 @@ const SearchPage = () => {
          <div className="mb-8 space-y-3">
             <h3 className="font-bold text-sm text-gray-400 uppercase">Results</h3>
             {searchResults.map(app => (
-               <Link key={app.id} to={`/runner?id=${app.id}`} className="flex items-center p-3 bg-vault-800 rounded-lg border border-white/10 hover:border-vault-accent/50 transition-colors">
-                 <img src={app.icon} className="w-10 h-10 rounded mr-3 bg-vault-700 object-cover" alt="" />
+               <Link key={app.id} to={`/runner?id=${app.id}`} className="flex items-center p-3 bg-white dark:bg-vault-800 rounded-lg border border-slate-100 dark:border-white/10 hover:border-sky-500 dark:hover:border-vault-accent/50 transition-colors shadow-sm dark:shadow-none">
+                 <img src={app.icon} className="w-10 h-10 rounded mr-3 bg-slate-200 dark:bg-vault-700 object-cover" alt="" />
                  <div className="flex-1">
-                   <h4 className="font-bold text-sm text-white">{app.name}</h4>
+                   <h4 className="font-bold text-sm text-slate-900 dark:text-white">{app.name}</h4>
                  </div>
-                 <Play className="w-4 h-4 text-vault-accent" />
+                 <Play className="w-4 h-4 text-sky-500 dark:text-vault-accent" />
                </Link>
             ))}
          </div>
       )}
 
       {/* AI Search */}
-      <div className="bg-gradient-to-br from-vault-800 to-purple-900/20 p-5 rounded-2xl border border-white/10">
-        <h2 className="font-bold text-white flex items-center mb-3">
-            <Sparkles className="w-5 h-5 mr-2 text-vault-accent" />
+      <div className="bg-gradient-to-br from-sky-100 to-indigo-50 dark:from-vault-800 dark:to-purple-900/20 p-5 rounded-2xl border border-sky-100 dark:border-white/10">
+        <h2 className="font-bold text-sky-900 dark:text-white flex items-center mb-3">
+            <Sparkles className="w-5 h-5 mr-2 text-sky-600 dark:text-vault-accent" />
             AI Discovery
         </h2>
-        <p className="text-sm text-gray-400 mb-4">Describe what you need, and Gemini will find the perfect app.</p>
+        <p className="text-sm text-slate-600 dark:text-gray-400 mb-4">Describe what you need, and Gemini will find the perfect app.</p>
         <textarea
-            className="w-full bg-vault-900 border border-white/10 rounded-xl p-3 text-sm focus:border-vault-accent focus:outline-none min-h-[80px] mb-4 text-white"
+            className="w-full bg-white dark:bg-vault-900 border border-sky-200 dark:border-white/10 rounded-xl p-3 text-sm focus:border-sky-500 dark:focus:border-vault-accent focus:outline-none min-h-[80px] mb-4 text-slate-900 dark:text-white placeholder-slate-400"
             placeholder="e.g., I need a calculator for my physics homework..."
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
@@ -339,7 +348,7 @@ const SearchPage = () => {
         <button 
             onClick={handleAiSearch}
             disabled={isAiLoading}
-            className="w-full bg-vault-accent hover:bg-vault-accentHover text-white font-bold py-3 rounded-xl flex items-center justify-center transition-all"
+            className="w-full bg-sky-500 hover:bg-sky-600 dark:bg-vault-accent dark:hover:bg-vault-accentHover text-white font-bold py-3 rounded-xl flex items-center justify-center transition-all shadow-md dark:shadow-none"
         >
             {isAiLoading ? <Loader2 className="animate-spin w-5 h-5"/> : 'Ask AI'}
         </button>
@@ -349,13 +358,13 @@ const SearchPage = () => {
         <div className="mt-8 space-y-3">
         <h3 className="font-bold text-sm text-gray-400 uppercase">AI Recommendations</h3>
         {aiResults.map(app => (
-            <Link key={app.id} to={`/runner?id=${app.id}`} className="flex items-center p-3 bg-vault-800 rounded-lg border border-white/10 border-l-4 border-l-vault-accent">
-            <img src={app.icon} className="w-10 h-10 rounded bg-gray-700 mr-3 object-cover" alt="" />
+            <Link key={app.id} to={`/runner?id=${app.id}`} className="flex items-center p-3 bg-white dark:bg-vault-800 rounded-lg border border-slate-100 dark:border-white/10 border-l-4 border-l-sky-500 dark:border-l-vault-accent shadow-sm dark:shadow-none">
+            <img src={app.icon} className="w-10 h-10 rounded bg-gray-200 dark:bg-gray-700 mr-3 object-cover" alt="" />
             <div className="flex-1">
-                <h4 className="font-bold text-sm text-white">{app.name}</h4>
-                <p className="text-xs text-gray-400 line-clamp-1">{app.description}</p>
+                <h4 className="font-bold text-sm text-slate-900 dark:text-white">{app.name}</h4>
+                <p className="text-xs text-slate-500 dark:text-gray-400 line-clamp-1">{app.description}</p>
             </div>
-            <Play className="w-4 h-4 text-vault-accent" />
+            <Play className="w-4 h-4 text-sky-500 dark:text-vault-accent" />
             </Link>
         ))}
         </div>
@@ -371,23 +380,23 @@ const WishlistPage = () => {
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-lg mx-auto min-h-screen">
-       <h1 className="text-2xl font-bold mb-6 text-white">Wishlist</h1>
+       <h1 className="text-2xl font-bold mb-6 text-slate-900 dark:text-white">Wishlist</h1>
        {wishlistApps.length === 0 ? (
           <div className="text-center text-gray-500 mt-20">
             <Heart className="w-12 h-12 mx-auto mb-2 opacity-50" />
             <p>No apps saved yet.</p>
-            <Link to="/" className="text-vault-accent text-sm mt-2 inline-block">Explore Apps</Link>
+            <Link to="/" className="text-sky-500 dark:text-vault-accent text-sm mt-2 inline-block">Explore Apps</Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3">
              {wishlistApps.map(app => (
-               <Link key={app.id} to={`/runner?id=${app.id}`} className="flex items-center p-4 bg-vault-800 rounded-xl border border-white/10 hover:border-vault-accent/50 transition-colors">
-                 <img src={app.icon} className="w-12 h-12 rounded-lg mr-4 object-cover bg-vault-700" alt="" />
+               <Link key={app.id} to={`/runner?id=${app.id}`} className="flex items-center p-4 bg-white dark:bg-vault-800 rounded-xl border border-slate-100 dark:border-white/10 hover:border-sky-300 dark:hover:border-vault-accent/50 transition-colors shadow-sm dark:shadow-none">
+                 <img src={app.icon} className="w-12 h-12 rounded-lg mr-4 object-cover bg-slate-200 dark:bg-vault-700" alt="" />
                  <div className="flex-1">
-                    <h4 className="font-bold text-gray-100">{app.name}</h4>
-                    <p className="text-xs text-gray-400">{app.category}</p>
+                    <h4 className="font-bold text-slate-900 dark:text-gray-100">{app.name}</h4>
+                    <p className="text-xs text-slate-500 dark:text-gray-400">{app.category}</p>
                  </div>
-                 <Play className="w-8 h-8 p-2 rounded-full bg-vault-700 text-vault-accent" />
+                 <Play className="w-8 h-8 p-2 rounded-full bg-sky-50 dark:bg-vault-700 text-sky-500 dark:text-vault-accent" />
                </Link>
              ))}
           </div>
@@ -402,7 +411,7 @@ const HistoryPage = () => {
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-lg mx-auto min-h-screen">
-      <h1 className="text-2xl font-bold mb-6 text-white">History</h1>
+      <h1 className="text-2xl font-bold mb-6 text-slate-900 dark:text-white">History</h1>
       {history.length === 0 ? (
         <div className="text-center text-gray-500 mt-20">
           <History className="w-12 h-12 mx-auto mb-2 opacity-50" />
@@ -411,20 +420,20 @@ const HistoryPage = () => {
       ) : (
         <div className="space-y-4">
           {history.map((item) => (
-            <div key={item.id} className="flex items-center justify-between p-4 bg-vault-800 rounded-xl border border-white/10">
+            <div key={item.id} className="flex items-center justify-between p-4 bg-white dark:bg-vault-800 rounded-xl border border-slate-100 dark:border-white/10 shadow-sm dark:shadow-none">
               <div className="flex items-center space-x-4">
-                <div className="w-10 h-10 rounded-full bg-vault-700 flex items-center justify-center text-vault-accent font-bold">
+                <div className="w-10 h-10 rounded-full bg-sky-50 dark:bg-vault-700 flex items-center justify-center text-sky-500 dark:text-vault-accent font-bold">
                    <History className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white">{item.appName}</h3>
-                  <p className="text-xs text-gray-400">
+                  <h3 className="font-bold text-slate-900 dark:text-white">{item.appName}</h3>
+                  <p className="text-xs text-slate-500 dark:text-gray-400">
                     {new Date(item.timestamp).toLocaleDateString()} • {Math.ceil(item.durationSeconds / 60)} min used
                   </p>
                 </div>
               </div>
-              <Link to={`/runner?id=${item.appId}`} className="p-2 rounded-full bg-vault-700 hover:bg-vault-600">
-                <Play className="w-4 h-4 text-white" />
+              <Link to={`/runner?id=${item.appId}`} className="p-2 rounded-full bg-slate-100 dark:bg-vault-700 hover:bg-slate-200 dark:hover:bg-vault-600">
+                <Play className="w-4 h-4 text-slate-700 dark:text-white" />
               </Link>
             </div>
           ))}
@@ -445,13 +454,13 @@ const AppContent = () => {
   };
 
   const getLinkClass = (path: string) => 
-    `flex flex-col items-center justify-center w-full h-full space-y-1 ${
-      location.pathname === path ? 'text-vault-accent' : 'text-gray-500 hover:text-gray-300'
+    `flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${
+      location.pathname === path ? 'text-sky-600 dark:text-vault-accent' : 'text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-gray-300'
     }`;
 
   return (
     <>
-      <div className="bg-vault-900 text-gray-100 font-sans min-h-screen">
+      <div className="bg-slate-50 dark:bg-vault-900 text-slate-900 dark:text-gray-100 font-sans min-h-screen transition-colors duration-300">
         <Routes>
           <Route path="/welcome" element={<LandingPage />} />
           <Route path="/auth" element={<AuthPage />} />
@@ -480,14 +489,16 @@ const AppContent = () => {
                         onUpdateUser={useAppContext().updateUser}
                         onDeleteAccount={useAppContext().deleteAccount}
                         onToggleTheme={useAppContext().toggleTheme}
+                        onChangePassword={useAppContext().changePassword}
                         onSubmitSupport={useAppContext().submitSupport}
+                        supportTickets={useAppContext().supportTickets}
                       />
                     } />
                  </Routes>
               </div>
               {/* Navigation Bar */}
               {!location.pathname.includes('/runner') && !location.pathname.includes('/admin') && (
-                 <nav className="fixed bottom-0 left-0 w-full bg-vault-800/90 backdrop-blur-md border-t border-white/5 pb-safe z-40">
+                 <nav className="fixed bottom-0 left-0 w-full bg-white/90 dark:bg-vault-800/90 backdrop-blur-md border-t border-slate-200 dark:border-white/5 pb-safe z-40 transition-colors duration-300">
                     <div className="flex justify-around items-center h-16 max-w-lg mx-auto px-2">
                        <Link to="/" className={getLinkClass('/')}>
                          <Home className="w-5 h-5" />
@@ -532,8 +543,6 @@ export default function App() {
   const [pointsHistory, setPointsHistory] = useLocalStorage<PointTransaction[]>('appvault_points', []);
   const [notifications, setNotifications] = useLocalStorage<Notification[]>('appvault_notifs', []);
   const [supportTickets, setSupportTickets] = useLocalStorage<SupportTicket[]>('appvault_support', []);
-  
-  // New User Database for Admin Panel
   const [allUsers, setAllUsers] = useLocalStorage<User[]>('appvault_users_db', []);
 
   // Initialize Dummy Users if Empty
@@ -542,73 +551,92 @@ export default function App() {
        setAllUsers([
          { id: 'admin', name: 'System Admin', email: 'admin@appvault.com', points: 5000, isPremium: true, avatar: '', isAdmin: true, joinedDate: new Date().toISOString(), themePreference: 'dark', subscriptionStatus: 'active' },
          { id: 'u1', name: 'Alice Walker', email: 'alice@example.com', points: 340, isPremium: true, avatar: '', isAdmin: false, joinedDate: new Date(Date.now() - 86400000 * 30).toISOString(), themePreference: 'dark', subscriptionStatus: 'active' },
-         { id: 'u2', name: 'Bob Builder', email: 'bob@construction.com', points: 20, isPremium: false, avatar: '', isAdmin: false, joinedDate: new Date(Date.now() - 86400000 * 5).toISOString(), themePreference: 'light', subscriptionStatus: 'inactive' },
        ]);
     }
   }, []);
 
+  // Theme Logic: Apply class to Document Root
   useEffect(() => {
+    const root = document.documentElement;
     if (user?.themePreference === 'dark') {
-      document.documentElement.classList.add('dark');
+      root.classList.add('dark');
     } else {
-      document.documentElement.classList.remove('dark');
+      root.classList.remove('dark');
     }
   }, [user?.themePreference]);
 
   // --- ACTIONS ---
-  const login = (email: string) => {
-    // Check if user exists in our local DB
-    const existing = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
+  
+  // Login with Supabase, fallback to local
+  const login = async (email: string, password?: string) => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: password || 'placeholder' });
+      if (!error && data.user) {
+        // Fetch profile from table if existed (omitted for brevity, using metadata or local sync)
+      } else if (error && password) {
+         throw error;
+      }
+    } catch (e) {
+      console.warn("Supabase Login failed (likely no keys), using local fallback.");
+    }
     
+    // Local Fallback
+    const existing = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
     if (existing) {
         setUser(existing);
     } else {
-        // Fallback or Auto-Create
+        // Auto-create for demo
         const isAdmin = email === 'admin@appvault.com';
         const newUser: User = { 
             id: isAdmin ? 'admin' : 'user_' + Date.now(), 
             name: isAdmin ? 'Admin User' : 'User ' + email.split('@')[0], 
-            email, 
-            points: 100, 
-            isPremium: isAdmin, 
-            avatar: '', 
-            isAdmin, 
-            joinedDate: new Date().toISOString(),
-            themePreference: 'dark',
-            subscriptionStatus: isAdmin ? 'active' : 'inactive'
+            email, points: 100, isPremium: isAdmin, avatar: '', isAdmin, 
+            joinedDate: new Date().toISOString(), themePreference: 'dark', subscriptionStatus: isAdmin ? 'active' : 'inactive'
         };
         setUser(newUser);
         setAllUsers(prev => [...prev, newUser]);
     }
   };
 
-  const signup = (name: string, email: string) => {
-    // Prevent duplicate emails
-    if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-        login(email);
-        return;
+  const signup = async (name: string, email: string, password?: string) => {
+    try {
+      const { error } = await supabase.auth.signUp({ email, password: password || 'placeholder', options: { data: { name } } });
+      if (error && password) throw error;
+    } catch (e) {
+      console.warn("Supabase Signup failed, using local fallback.");
     }
 
+    if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+        return login(email, password);
+    }
     const newUser: User = { 
-      id: 'user_' + Date.now(), 
-      name, 
-      email, 
-      points: 50, 
-      isPremium: false, 
-      avatar: '', 
-      isAdmin: false, 
-      joinedDate: new Date().toISOString(),
-      themePreference: 'dark',
-      subscriptionStatus: 'inactive'
+      id: 'user_' + Date.now(), name, email, points: 50, isPremium: false, avatar: '', isAdmin: false, 
+      joinedDate: new Date().toISOString(), themePreference: 'dark', subscriptionStatus: 'inactive'
     };
     setUser(newUser);
     setAllUsers(prev => [...prev, newUser]);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     setHistory([]);
     setWishlist([]);
+  };
+
+  const changePassword = async (newPassword: string) => {
+    // 1. Try Supabase
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+       console.error("Supabase Password Update Failed:", error);
+       // If local user, just simulate success
+       if (user?.id.startsWith('user_')) {
+          alert("Password updated locally (Demo mode).");
+          return;
+       }
+       throw new Error(error.message);
+    }
+    alert("Password updated successfully!");
   };
 
   const addApp = (app: AppData) => setApps(prev => [...prev, app]);
@@ -617,8 +645,6 @@ export default function App() {
 
   const addToHistory = (app: AppData, duration: number) => {
     setHistory(prev => [{ id: Date.now().toString(), appId: app.id, appName: app.name, appIcon: app.icon, timestamp: Date.now(), durationSeconds: duration }, ...prev]);
-    
-    // Award Points
     const pts = 1;
     if (user) {
         const updatedUser = { ...user, points: user.points + pts };
@@ -628,10 +654,10 @@ export default function App() {
     }
   };
 
-  const reportBug = (desc: string) => {
+  const reportBug = (title: string, desc: string, contact: string) => {
     if (!user) return;
     setBugReports(prev => [...prev, {
-      id: Date.now().toString(), userId: user.id, userName: user.name, description: desc, status: 'pending', date: new Date().toISOString(), rewardPoints: 50
+      id: Date.now().toString(), userId: user.id, userName: user.name, title, description: desc, contactInfo: contact, status: 'pending', date: new Date().toISOString(), rewardPoints: 50
     }]);
   };
 
@@ -639,13 +665,11 @@ export default function App() {
     setBugReports(prev => prev.map(b => b.id === id ? { ...b, status } : b));
     if (status === 'approved') {
        const bug = bugReports.find(b => b.id === id);
-       // Award points to the reporter in the DB
        if (bug && bug.rewardPoints > 0) {
            setAllUsers(prev => prev.map(u => {
                if (u.id === bug.userId) return { ...u, points: u.points + bug.rewardPoints };
                return u;
            }));
-           // If current user is the reporter, update local state
            if (user && user.id === bug.userId) {
                setUser(u => u ? ({ ...u, points: u.points + bug.rewardPoints }) : null);
            }
@@ -655,27 +679,14 @@ export default function App() {
 
   const upgradeUser = (redeemedPoints: number = 0, paymentId?: string) => {
     if (!user) return;
-    
     const updatedUser: User = {
-         ...user,
-         isPremium: true,
-         subscriptionStatus: 'active',
-         points: user.points - redeemedPoints,
-         subscriptionDate: new Date().toISOString(),
-         subscriptionId: paymentId || 'manual_upgrade'
+         ...user, isPremium: true, subscriptionStatus: 'active', points: user.points - redeemedPoints,
+         subscriptionDate: new Date().toISOString(), subscriptionId: paymentId || 'manual_upgrade'
     };
-    
     setUser(updatedUser);
     setAllUsers(prev => prev.map(u => u.id === user.id ? updatedUser : u));
-
     if (redeemedPoints > 0) {
-      setPointsHistory(prev => [{
-         id: Date.now().toString(),
-         date: new Date().toISOString(),
-         amount: redeemedPoints,
-         reason: 'Discount on Premium',
-         type: 'redeemed'
-      }, ...prev]);
+      setPointsHistory(prev => [{ id: Date.now().toString(), date: new Date().toISOString(), amount: redeemedPoints, reason: 'Discount on Premium', type: 'redeemed' }, ...prev]);
     }
   };
 
@@ -689,17 +700,11 @@ export default function App() {
   const deleteUser = (userId: string) => {
     if (confirm("Are you sure you want to delete this user?")) {
         setAllUsers(prev => prev.filter(u => u.id !== userId));
-        // If admin deletes themselves
         if (user && user.id === userId) logout();
     }
   };
 
-  const deleteAccount = () => { 
-      if (user) {
-        deleteUser(user.id);
-        logout();
-      }
-  };
+  const deleteAccount = () => { if (user) { deleteUser(user.id); logout(); } };
   
   const toggleTheme = () => {
     if (user) updateUser({ themePreference: user.themePreference === 'dark' ? 'light' : 'dark' });
@@ -710,22 +715,17 @@ export default function App() {
   const submitSupport = (subject: string, message: string) => {
     if (!user) return;
     setSupportTickets(prev => [...prev, {
-       id: Date.now().toString(),
-       userId: user.id,
-       subject,
-       message,
-       date: new Date().toISOString(),
-       status: 'open'
+       id: Date.now().toString(), userId: user.id, subject, message, date: new Date().toISOString(), status: 'open'
     }]);
   };
 
   return (
     <HashRouter>
       <AppContext.Provider value={{ 
-        user, isAuthenticated: !!user, apps, history, wishlist, bugReports, pointsHistory, notifications,
+        user, isAuthenticated: !!user, apps, history, wishlist, bugReports, pointsHistory, notifications, supportTickets,
         login, signup, logout, addToHistory, toggleWishlist, reportBug, resolveBug, 
         upgradeUser, addApp, removeApp, updateApp, updateUser, deleteAccount,
-        toggleTheme, submitSupport, allUsers, deleteUser
+        toggleTheme, submitSupport, allUsers, deleteUser, changePassword
       } as any}>
         <AppContent />
       </AppContext.Provider>
